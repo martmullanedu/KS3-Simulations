@@ -1,0 +1,596 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>KS3: Saturation — salt vs sugar solubility</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 16px; }
+    .row { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
+    canvas { border: 1px solid #ccc; border-radius: 12px; }
+    .panel { max-width: 480px; }
+    .controls { display: grid; gap: 10px; margin-top: 10px; }
+    label { display: grid; grid-template-columns: 170px 1fr 60px; gap: 10px; align-items: center; }
+    select, button { padding: 10px 12px; border: 1px solid #ccc; border-radius: 10px; background: #fff; }
+    input[type="range"] { width: 100%; }
+    button { cursor: pointer; }
+    button:active { transform: translateY(1px); }
+    .tiny { font-size: 12px; color: #555; line-height: 1.35; }
+    .legend { margin-top: 8px; font-size: 13px; }
+    .pill { display:inline-block; padding:2px 8px; border-radius:999px; border:1px solid #ddd; margin-right:8px; margin-bottom:6px; }
+    .stat { font-size: 13px; color:#222; padding: 10px 12px; border:1px solid #ddd; border-radius: 12px; background:#fff; }
+  </style>
+</head>
+<body>
+  <h2>KS3 Particle Model: Saturation (compare salt vs sugar)</h2>
+
+  <div class="row">
+    <canvas id="c" width="840" height="560"></canvas>
+
+    <div class="panel">
+      <div class="controls">
+        <label>
+          <span>Solute</span>
+          <select id="solute">
+            <option value="salt">Salt (NaCl)</option>
+            <option value="sugar">Sugar (sucrose)</option>
+          </select>
+          <span></span>
+        </label>
+
+        <label>
+          <span>Temperature</span>
+          <input id="temp" type="range" min="0" max="100" value="40" />
+          <span id="tempV">40</span>
+        </label>
+
+        <label>
+          <span>Stirring</span>
+          <input id="stir" type="range" min="0" max="100" value="35" />
+          <span id="stirV">35</span>
+        </label>
+
+        <label>
+          <span>Zoom</span>
+          <input id="zoom" type="range" min="80" max="170" value="120" />
+          <span id="zoomV">120</span>
+        </label>
+
+        <div style="display:flex; gap:10px; flex-wrap:wrap;">
+          <button id="addSmall">Add 10 “particles”</button>
+          <button id="addLarge">Add 30 “particles”</button>
+          <button id="reset">Reset</button>
+          <button id="pause">Pause</button>
+        </div>
+
+        <div class="stat" id="statBox"></div>
+
+        <div class="legend">
+          <div class="pill">Water = blue (O with H’s)</div>
+          <div class="pill" id="soluteLegend"></div>
+          <div class="pill">Undissolved = pile at bottom</div>
+        </div>
+
+        <p class="tiny">
+          This is a teaching model: “maximum dissolved” changes with temperature and differs for salt vs sugar.
+          Once the limit is reached, extra solute stays undissolved (saturated solution).
+        </p>
+      </div>
+    </div>
+  </div>
+
+<script>
+(() => {
+  const canvas = document.getElementById("c");
+  const ctx = canvas.getContext("2d");
+
+  const soluteEl = document.getElementById("solute");
+  const tempEl = document.getElementById("temp");
+  const stirEl = document.getElementById("stir");
+  const zoomEl = document.getElementById("zoom");
+  const tempV = document.getElementById("tempV");
+  const stirV = document.getElementById("stirV");
+  const zoomV = document.getElementById("zoomV");
+  const addSmallBtn = document.getElementById("addSmall");
+  const addLargeBtn = document.getElementById("addLarge");
+  const resetBtn = document.getElementById("reset");
+  const pauseBtn = document.getElementById("pause");
+  const statBox = document.getElementById("statBox");
+  const soluteLegend = document.getElementById("soluteLegend");
+
+  let paused = false;
+  const W = canvas.width, H = canvas.height;
+
+  // Beaker geometry
+  const beaker = { x: 110, y: 50, w: 560, h: 460, r: 22 };
+  let waterLevel = beaker.y + 80;
+  let bottom = beaker.y + beaker.h - 18;
+
+  // Helpers
+  const rand = (a,b)=>a+Math.random()*(b-a);
+  const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+  const dist2=(ax,ay,bx,by)=>{const dx=ax-bx, dy=ay-by; return dx*dx+dy*dy;};
+
+  // Particle arrays
+  let waters = [];
+  let dissolved = [];   // dissolved solute particles
+  let pile = [];        // undissolved solids at bottom
+
+  // Sizes (scaled by zoom)
+  let waterR = 7, ionR = 8;
+
+  function z(){ return Number(zoomEl.value)/100; } // 0.8 .. 1.7
+
+  // Model: dissolved capacity depends on solute + temperature
+  // (Not real numbers; tuned for KS3 comparison.)
+  function maxDissolvedCount(solute, temp){
+    const t = temp/100;
+    if (solute === "salt") {
+      // modest, weak temperature dependence
+      return Math.round(120 + 30*t);  // ~120 → ~150
+    }
+    // sugar: higher, stronger temperature dependence
+    return Math.round(160 + 160*t);   // ~160 → ~320
+  }
+
+  function clampToBeaker(p){
+    const left = beaker.x + 24;
+    const right = beaker.x + beaker.w - 24;
+    const top = waterLevel + 12;
+    const bot = bottom - 10;
+    if (p.x < left){ p.x = left; p.vx *= -1; }
+    if (p.x > right){ p.x = right; p.vx *= -1; }
+    if (p.y < top){ p.y = top; p.vy *= -1; }
+    if (p.y > bot){ p.y = bot; p.vy *= -1; }
+  }
+
+  // Denser water: scales with zoom so it stays “full” on projector
+  function waterCount(){
+    // At default zoom 1.2 => ~360 waters
+    return Math.round(300 * z());
+  }
+
+  function buildWater(n){
+    waters = [];
+    for (let i=0;i<n;i++){
+      waters.push({
+        x: rand(beaker.x+34, beaker.x+beaker.w-34),
+        y: rand(waterLevel+28, bottom-34),
+        vx: rand(-0.55,0.55),
+        vy: rand(-0.55,0.55),
+        ang: rand(0, Math.PI*2),
+        spin: rand(-0.10,0.10)
+      });
+    }
+  }
+
+  function syncLegend(){
+    if (soluteEl.value === "salt"){
+      soluteLegend.textContent = "Salt in solution = Na⁺ (orange) + Cl⁻ (green)";
+    } else {
+      soluteLegend.textContent = "Sugar in solution = big purple molecules (slower)";
+    }
+  }
+
+  function updateStats(){
+    const solute = soluteEl.value;
+    const temp = Number(tempEl.value);
+    const maxD = maxDissolvedCount(solute, temp);
+    const saturated = dissolved.length >= maxD;
+
+    const name = (solute === "salt") ? "Salt (NaCl)" : "Sugar (sucrose)";
+    const note = saturated
+      ? "Saturated: extra solute stays undissolved."
+      : "Unsaturated: more solute can still dissolve.";
+
+    statBox.innerHTML =
+      `<b>${name}</b><br>` +
+      `Dissolved: <b>${dissolved.length}</b> / Max at this temperature: <b>${maxD}</b><br>` +
+      `Undissolved in pile: <b>${pile.length}</b><br>` +
+      `${note}`;
+  }
+
+  function resetAll(){
+    dissolved = [];
+    pile = [];
+    buildWater(waterCount());
+    syncLegend();
+    updateStats();
+  }
+
+  // Add solute: fills dissolved up to max, remainder goes to pile
+  function addSolute(n){
+    const solute = soluteEl.value;
+    const temp = Number(tempEl.value);
+    const maxD = maxDissolvedCount(solute, temp);
+
+    const canDissolve = Math.max(0, maxD - dissolved.length);
+    const toDissolve = Math.min(n, canDissolve);
+    const toPile = n - toDissolve;
+
+    // Spawn dissolved particles dispersed throughout water
+    for (let i=0;i<toDissolve;i++){
+      if (solute === "salt"){
+        const type = (Math.random() < 0.5) ? "Na" : "Cl";
+        dissolved.push({
+          kind: "salt",
+          type,
+          x: rand(beaker.x+40, beaker.x+beaker.w-40),
+          y: rand(waterLevel+34, bottom-80),
+          vx: rand(-1.2,1.2),
+          vy: rand(-1.2,1.2),
+          hydrate: rand(0.5, 1.0)
+        });
+      } else {
+        // Sugar molecules: bigger and slower
+        dissolved.push({
+          kind: "sugar",
+          x: rand(beaker.x+40, beaker.x+beaker.w-40),
+          y: rand(waterLevel+34, bottom-80),
+          vx: rand(-0.6,0.6),
+          vy: rand(-0.6,0.6),
+          ang: rand(0, Math.PI*2),
+          spin: rand(-0.05,0.05)
+        });
+      }
+    }
+
+    // Add undissolved solids as a bottom pile that grows
+    const spacing = 20 * z();
+    for (let i=0;i<toPile;i++){
+      const idx = pile.length;
+      const cols = Math.max(8, Math.floor((beaker.w-90)/spacing));
+      const row = Math.floor(idx / cols);
+      const col = idx % cols;
+      const startX = beaker.x + 45;
+      const startY = bottom - 16 - row*spacing;
+
+      pile.push({
+        solute,
+        x: startX + col*spacing + rand(-2*z(),2*z()),
+        y: startY + rand(-2*z(),2*z()),
+        type: (solute === "salt")
+          ? (Math.random()<0.5 ? "Na" : "Cl")
+          : "Sugar"
+      });
+    }
+
+    updateStats();
+  }
+
+  // Motion
+  function step(){
+    const solute = soluteEl.value;
+    const temp = Number(tempEl.value);
+    const stir = Number(stirEl.value);
+
+    // Update sizes with zoom
+    waterR = 7.0 * z();
+    ionR = 8.0 * z();
+
+    // Vortex centre for stirring
+    const cx = beaker.x + beaker.w*0.58;
+    const cy = beaker.y + beaker.h*0.52;
+
+    // Water motion
+    for (const w of waters){
+      const tempFactor = 0.45 + (temp/100)*1.7;
+
+      // thermal jiggle
+      w.vx += rand(-0.055,0.055) * tempFactor;
+      w.vy += rand(-0.055,0.055) * tempFactor;
+
+      // vortex stirring
+      const dx = w.x - cx, dy = w.y - cy;
+      const r2 = dx*dx + dy*dy + 1700;
+      const swirl = 1.05 * (stir/100) / Math.sqrt(r2);
+      w.vx += (-dy) * swirl;
+      w.vy += ( dx) * swirl;
+
+      w.vx *= 0.985;
+      w.vy *= 0.985;
+
+      w.x += w.vx;
+      w.y += w.vy;
+
+      clampToBeaker(w);
+      w.ang += w.spin * (0.25 + temp/120);
+    }
+
+    // Dissolved solute motion (salt faster; sugar slower/heavier)
+    for (const p of dissolved){
+      const dx = p.x - cx, dy = p.y - cy;
+      const r2 = dx*dx + dy*dy + 1700;
+      const swirl = 1.15 * (stir/100) / Math.sqrt(r2);
+
+      if (p.kind === "salt"){
+        const jig = 0.055;
+        const tempBoost = (0.8 + temp/90);
+        p.vx += rand(-jig,jig) * tempBoost;
+        p.vy += rand(-jig,jig) * tempBoost;
+
+        p.vx += (-dy) * swirl;
+        p.vy += ( dx) * swirl;
+
+        // hydration/interspersing pull (salt stronger)
+        const range = 30 * z();
+        for (let k=0; k<waters.length; k++){
+          const w = waters[k];
+          const d2 = dist2(p.x,p.y,w.x,w.y);
+          if (d2 < range*range){
+            const d = Math.sqrt(d2) + 0.001;
+            const pull = 0.020 * (1 - d/range);
+            w.vx += (p.x - w.x) * pull;
+            w.vy += (p.y - w.y) * pull;
+            p.vx *= 0.998;
+            p.vy *= 0.998;
+          }
+        }
+
+        p.vx *= 0.985;
+        p.vy *= 0.985;
+
+      } else {
+        // sugar: heavier/slower diffusion
+        const jig = 0.030;
+        p.vx += rand(-jig,jig) * (0.7 + temp/140);
+        p.vy += rand(-jig,jig) * (0.7 + temp/140);
+
+        p.vx += (-dy) * (swirl * 0.65);
+        p.vy += ( dx) * (swirl * 0.65);
+
+        // interspersing pull (sugar weaker so it doesn't feel ionic)
+        const range = 28 * z();
+        for (let k=0; k<waters.length; k++){
+          const w = waters[k];
+          const d2 = dist2(p.x,p.y,w.x,w.y);
+          if (d2 < range*range){
+            const d = Math.sqrt(d2) + 0.001;
+            const pull = 0.006 * (1 - d/range);
+            w.vx += (p.x - w.x) * pull;
+            w.vy += (p.y - w.y) * pull;
+            p.vx *= 0.999;
+            p.vy *= 0.999;
+          }
+        }
+
+        p.vx *= 0.975;
+        p.vy *= 0.975;
+
+        p.ang += p.spin * (0.35 + temp/140);
+      }
+
+      p.x += p.vx;
+      p.y += p.vy;
+      clampToBeaker(p);
+    }
+  }
+
+  // Drawing helpers
+  function roundRectPath(x,y,w,h,r){
+    ctx.beginPath();
+    if (ctx.roundRect) ctx.roundRect(x,y,w,h,r);
+    else {
+      ctx.moveTo(x+r, y);
+      ctx.arcTo(x+w, y, x+w, y+h, r);
+      ctx.arcTo(x+w, y+h, x, y+h, r);
+      ctx.arcTo(x, y+h, x, y, r);
+      ctx.arcTo(x, y, x+w, y, r);
+      ctx.closePath();
+    }
+  }
+
+  function drawBeaker(){
+    ctx.clearRect(0,0,W,H);
+
+    // Heading
+    ctx.fillStyle = "#111";
+    ctx.font = "14px system-ui";
+    ctx.fillText("Add solute until the solution reaches the maximum → then extra stays undissolved (saturation).", 16, 18);
+
+    // Beaker outline
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "#444";
+    roundRectPath(beaker.x, beaker.y, beaker.w, beaker.h, beaker.r);
+    ctx.stroke();
+
+    // Water fill
+    ctx.fillStyle = "rgba(120,170,255,0.14)";
+    roundRectPath(beaker.x+1, waterLevel, beaker.w-2, (beaker.y+beaker.h-waterLevel)-1, 16);
+    ctx.fill();
+
+    // Surface line
+    ctx.strokeStyle = "rgba(30,60,120,0.35)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(beaker.x+18, waterLevel);
+    ctx.lineTo(beaker.x+beaker.w-18, waterLevel);
+    ctx.stroke();
+
+    // Bottom line
+    ctx.strokeStyle = "rgba(0,0,0,0.2)";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(beaker.x+18, bottom);
+    ctx.lineTo(beaker.x+beaker.w-18, bottom);
+    ctx.stroke();
+
+    // Scale bar (visibility)
+    const barLen = 150;
+    const bx = beaker.x + beaker.w + 45;
+    const by = beaker.y + 75;
+    ctx.strokeStyle = "rgba(0,0,0,0.65)";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(bx, by);
+    ctx.lineTo(bx + barLen, by);
+    ctx.stroke();
+    ctx.fillStyle = "rgba(0,0,0,0.8)";
+    ctx.font = "12px system-ui";
+    ctx.fillText("Scale bar (visibility)", bx, by - 10);
+
+    // Saturation meter (outside)
+    const solute = soluteEl.value;
+    const temp = Number(tempEl.value);
+    const maxD = maxDissolvedCount(solute, temp);
+    const frac = clamp(dissolved.length / maxD, 0, 1);
+
+    const meterX = beaker.x + beaker.w + 45;
+    const meterY = beaker.y + 135;
+    const meterW = 150, meterH = 16;
+
+    ctx.fillStyle = "rgba(0,0,0,0.08)";
+    ctx.fillRect(meterX, meterY, meterW, meterH);
+    ctx.fillStyle = "rgba(0,0,0,0.28)";
+    ctx.fillRect(meterX, meterY, meterW*frac, meterH);
+    ctx.strokeStyle = "rgba(0,0,0,0.25)";
+    ctx.strokeRect(meterX, meterY, meterW, meterH);
+
+    ctx.fillStyle = "rgba(0,0,0,0.8)";
+    ctx.font = "12px system-ui";
+    ctx.fillText("Saturation meter", meterX, meterY - 8);
+    ctx.fillText(`${Math.round(frac*100)}% full`, meterX + meterW + 10, meterY + 12);
+
+    // Subtle “crowding tint” inside the beaker (makes “filling up” obvious)
+    // As saturation increases, water looks more “crowded” (slightly darker tint).
+    const crowdAlpha = 0.05 + 0.18 * frac; // 0.05 .. 0.23
+    ctx.fillStyle = `rgba(60,60,60,${crowdAlpha})`;
+    roundRectPath(beaker.x+8, waterLevel+8, beaker.w-16, (bottom - (waterLevel+8)) - 10, 14);
+    ctx.fill();
+
+    // Label inside beaker for the crowding effect
+    ctx.fillStyle = "rgba(255,255,255,0.85)";
+    ctx.font = "12px system-ui";
+    ctx.fillText("More dissolved solute → solution looks more “full”", beaker.x + 18, waterLevel + 24);
+  }
+
+  function drawWater(){
+    for (const w of waters){
+      // Oxygen
+      ctx.fillStyle = "rgba(40,90,255,0.55)";
+      ctx.beginPath();
+      ctx.arc(w.x, w.y, waterR, 0, Math.PI*2);
+      ctx.fill();
+
+      // Hydrogens
+      const a = w.ang;
+      const hDist = 10 * z();
+      const hAng = 0.55;
+      const hx1 = w.x + Math.cos(a + hAng)*hDist;
+      const hy1 = w.y + Math.sin(a + hAng)*hDist;
+      const hx2 = w.x + Math.cos(a - hAng)*hDist;
+      const hy2 = w.y + Math.sin(a - hAng)*hDist;
+
+      ctx.fillStyle = "rgba(120,200,255,0.65)";
+      ctx.beginPath(); ctx.arc(hx1, hy1, 2.8*z(), 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(hx2, hy2, 2.8*z(), 0, Math.PI*2); ctx.fill();
+    }
+  }
+
+  function drawDissolved(){
+    for (const p of dissolved){
+      if (p.kind === "salt"){
+        if (p.type === "Na") {
+          ctx.fillStyle = "rgba(255,150,40,0.95)";
+          ctx.beginPath(); ctx.arc(p.x, p.y, ionR, 0, Math.PI*2); ctx.fill();
+          ctx.fillStyle = "rgba(0,0,0,0.55)";
+          ctx.font = `${12*z()}px system-ui`;
+          ctx.fillText("+", p.x-3*z(), p.y+4*z());
+        } else {
+          ctx.fillStyle = "rgba(70,195,120,0.95)";
+          ctx.beginPath(); ctx.arc(p.x, p.y, ionR, 0, Math.PI*2); ctx.fill();
+          ctx.fillStyle = "rgba(0,0,0,0.55)";
+          ctx.font = `${14*z()}px system-ui`;
+          ctx.fillText("−", p.x-3*z(), p.y+5*z());
+        }
+      } else {
+        // Sugar: chunky cluster (very distinct from water)
+        const zz = z();
+        const a = p.ang;
+        const rCore = 10.5 * zz;
+        const rSat  = 4.0 * zz;
+        const d = 12.5 * zz;
+
+        ctx.fillStyle = "rgba(135,70,210,0.85)";
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, rCore, 0, Math.PI*2);
+        ctx.fill();
+
+        ctx.fillStyle = "rgba(185,135,240,0.75)";
+        for (let m=0; m<5; m++){
+          const th = a + m*(Math.PI*2/5);
+          ctx.beginPath();
+          ctx.arc(p.x + Math.cos(th)*d, p.y + Math.sin(th)*d, rSat, 0, Math.PI*2);
+          ctx.fill();
+        }
+      }
+    }
+
+    ctx.fillStyle = "rgba(255,255,255,0.85)";
+    ctx.font = "12px system-ui";
+    ctx.fillText("Dissolved solute is interspersed between water molecules", beaker.x + 18, beaker.y + 30);
+  }
+
+  function drawPile(){
+    for (const s of pile){
+      if (s.solute === "salt"){
+        ctx.fillStyle = (s.type === "Na") ? "rgba(255,170,70,0.90)" : "rgba(80,200,120,0.90)";
+      } else {
+        ctx.fillStyle = "rgba(150,90,220,0.72)";
+      }
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, 9.0*z(), 0, Math.PI*2);
+      ctx.fill();
+    }
+
+    ctx.fillStyle = "rgba(0,0,0,0.7)";
+    ctx.font = "13px system-ui";
+    ctx.fillText("Undissolved solute (solid)", beaker.x + 18, bottom - 10);
+  }
+
+  function draw(){
+    drawBeaker();
+    drawWater();
+    drawDissolved();
+    drawPile();
+  }
+
+  // UI wiring
+  function syncLabels(){
+    tempV.textContent = tempEl.value;
+    stirV.textContent = stirEl.value;
+    zoomV.textContent = zoomEl.value;
+  }
+
+  soluteEl.addEventListener("change", () => resetAll());
+  tempEl.addEventListener("input", () => { syncLabels(); updateStats(); });
+  stirEl.addEventListener("input", () => { syncLabels(); });
+  zoomEl.addEventListener("input", () => {
+    syncLabels();
+    // keep things readable as zoom changes
+    buildWater(waterCount());
+  });
+
+  addSmallBtn.addEventListener("click", () => addSolute(10));
+  addLargeBtn.addEventListener("click", () => addSolute(30));
+  resetBtn.addEventListener("click", () => resetAll());
+
+  pauseBtn.addEventListener("click", () => {
+    paused = !paused;
+    pauseBtn.textContent = paused ? "Resume" : "Pause";
+  });
+
+  function tick(){
+    if (!paused) step();
+    draw();
+    requestAnimationFrame(tick);
+  }
+
+  // Start
+  syncLabels();
+  resetAll();
+  tick();
+})();
+</script>
+</body>
+</html>
