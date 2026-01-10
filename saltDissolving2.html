@@ -1,0 +1,491 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>KS3: Salt dissolving in water (beaker model)</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 16px; }
+    .row { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
+    canvas { border: 1px solid #ccc; border-radius: 12px; }
+    .panel { max-width: 440px; }
+    .controls { display: grid; gap: 10px; margin-top: 10px; }
+    label { display: grid; grid-template-columns: 160px 1fr 52px; gap: 10px; align-items: center; }
+    input[type="range"] { width: 100%; }
+    button { padding: 10px 12px; border: 1px solid #ccc; border-radius: 10px; background: #fff; cursor: pointer; }
+    button:active { transform: translateY(1px); }
+    .tiny { font-size: 12px; color: #555; line-height: 1.35; }
+    .legend { margin-top: 10px; font-size: 13px; }
+    .pill { display:inline-block; padding:2px 8px; border-radius:999px; border:1px solid #ddd; margin-right:8px; margin-bottom:6px; }
+  </style>
+</head>
+<body>
+  <h2>KS3 Particle Model: Salt dissolving in water (beaker view)</h2>
+
+  <div class="row">
+    <canvas id="c" width="780" height="520"></canvas>
+
+    <div class="panel">
+      <div class="controls">
+        <label>
+          <span>Temperature</span>
+          <input id="temp" type="range" min="0" max="100" value="45" />
+          <span id="tempV">45</span>
+        </label>
+        <label>
+          <span>Stirring</span>
+          <input id="stir" type="range" min="0" max="100" value="30" />
+          <span id="stirV">30</span>
+        </label>
+        <label>
+          <span>Salt amount</span>
+          <input id="salt" type="range" min="12" max="140" value="80" />
+          <span id="saltV">80</span>
+        </label>
+        <label>
+          <span>Zoom</span>
+          <input id="zoom" type="range" min="70" max="180" value="120" />
+          <span id="zoomV">120</span>
+        </label>
+
+        <button id="reset">Reset</button>
+        <button id="pause">Pause</button>
+
+        <div class="legend">
+          <span class="pill">Na⁺ = orange</span>
+          <span class="pill">Cl⁻ = green</span>
+          <span class="pill">Water = blue (with H’s)</span>
+        </div>
+
+        <p class="tiny">
+          KS3 story: the salt is a crystal at the bottom. Water molecules collide with the surface and
+          pull ions away. Higher temperature and stirring increase collisions and dispersal.
+          (Not to scale; the “scale bar” is for visibility only.)
+        </p>
+      </div>
+    </div>
+  </div>
+
+<script>
+(() => {
+  const canvas = document.getElementById("c");
+  const ctx = canvas.getContext("2d");
+
+  const tempEl = document.getElementById("temp");
+  const stirEl = document.getElementById("stir");
+  const saltEl = document.getElementById("salt");
+  const zoomEl = document.getElementById("zoom");
+
+  const tempV = document.getElementById("tempV");
+  const stirV = document.getElementById("stirV");
+  const saltV = document.getElementById("saltV");
+  const zoomV = document.getElementById("zoomV");
+
+  const resetBtn = document.getElementById("reset");
+  const pauseBtn = document.getElementById("pause");
+
+  let paused = false;
+
+  const W = canvas.width, H = canvas.height;
+
+  // Beaker geometry
+  const beaker = {
+    x: 90, y: 40,
+    w: 560, h: 440,
+    rimR: 20
+  };
+
+  const waterLevel = beaker.y + 70;          // surface (near top)
+  const bottom = beaker.y + beaker.h - 18;   // inside bottom
+
+  // Helpers
+  const rand = (a,b)=>a+Math.random()*(b-a);
+  const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+  const dist2=(ax,ay,bx,by)=>{const dx=ax-bx, dy=ay-by; return dx*dx+dy*dy;};
+
+  // Particles
+  let waters = [];
+  let ions = [];
+  let lattice = [];
+
+  // Sizes (will be multiplied by zoom)
+  let waterR = 6.0;
+  let ionR = 7.0;
+  let latticeR = 7.0;
+
+  function zoomFactor(){
+    return Number(zoomEl.value)/100; // 0.7 to 1.8
+  }
+
+  // Build a “pile” of NaCl at the bottom center
+  function buildLattice(count){
+    lattice = [];
+
+    const z = zoomFactor();
+    const spacing = 16 * z;
+
+    const pileWidth = Math.ceil(Math.sqrt(count));
+    const pileHeight = Math.ceil(count / pileWidth);
+
+    const startX = beaker.x + beaker.w/2 - (pileWidth*spacing)/2;
+    const startY = bottom - pileHeight*spacing;
+
+    let placed = 0;
+    for (let r=0; r<pileHeight; r++){
+      for (let c=0; c<pileWidth; c++){
+        if (placed >= count) break;
+
+        // Slightly randomise positions to look like a pile, not a perfect block
+        const jitter = 2.3 * z;
+        const x = startX + c*spacing + rand(-jitter,jitter);
+        const y = startY + r*spacing + rand(-jitter,jitter);
+
+        // Alternate ions like a lattice
+        const type = ((r+c)%2===0) ? "Na" : "Cl";
+
+        lattice.push({
+          x, y, vx:0, vy:0,
+          type,
+          hold: rand(40, 75) // “how many hits before it dissolves”
+        });
+
+        placed++;
+      }
+    }
+  }
+
+  function buildWater(n=180){
+    waters = [];
+    const z = zoomFactor();
+
+    for (let i=0;i<n;i++){
+      waters.push({
+        x: rand(beaker.x+30, beaker.x+beaker.w-30),
+        y: rand(waterLevel+20, bottom-30),
+        vx: rand(-0.7,0.7),
+        vy: rand(-0.7,0.7),
+        ang: rand(0, Math.PI*2),
+        spin: rand(-0.09,0.09) * (0.9 + 0.3/z)
+      });
+    }
+  }
+
+  function resetAll(){
+    ions = [];
+    buildLattice(Number(saltEl.value));
+    buildWater(180);
+  }
+
+  // Dissolving rule: surface lattice ions with enough water “hits” become free ions
+  function tryDissolve(temp, stir){
+    const z = zoomFactor();
+    const surfaceRadius2 = (20*z)*(20*z);
+
+    for (let i=lattice.length-1; i>=0; i--){
+      const p = lattice[i];
+
+      // Crude “surface” check: if many lattice neighbors close by, it’s “inside”
+      let neighbors = 0;
+      for (let j=0;j<lattice.length;j++){
+        if (i===j) continue;
+        if (dist2(p.x,p.y,lattice[j].x,lattice[j].y) < (18*z)*(18*z)) neighbors++;
+      }
+      const surface = neighbors < 5;
+      if (!surface) continue;
+
+      // Water collisions
+      let hits = 0;
+      for (let w=0; w<waters.length; w++){
+        const wa = waters[w];
+        if (dist2(p.x,p.y,wa.x,wa.y) < surfaceRadius2) hits++;
+      }
+
+      const energy = 0.25 + (temp/100)*0.95;
+      const mixing = 0.25 + (stir/100)*0.95;
+
+      p.hold -= hits * 0.8 * energy;
+      p.hold -= 0.14 * energy * mixing;
+
+      if (p.hold <= 0){
+        lattice.splice(i,1);
+        ions.push({
+          x: p.x, y: p.y,
+          vx: rand(-1.4,1.4) * (0.4 + mixing),
+          vy: rand(-1.4,1.4) * (0.4 + mixing),
+          type: p.type,
+          hydrate: rand(0.5, 1.0)
+        });
+      }
+    }
+  }
+
+  // Constrain a particle inside the beaker + below water surface
+  function clampToBeaker(p){
+    const z = zoomFactor();
+    const left = beaker.x + 22;
+    const right = beaker.x + beaker.w - 22;
+    const top = waterLevel + 10;
+    const bot = bottom - 8;
+
+    if (p.x < left){ p.x = left; p.vx *= -1; }
+    if (p.x > right){ p.x = right; p.vx *= -1; }
+    if (p.y < top){ p.y = top; p.vy *= -1; }
+    if (p.y > bot){ p.y = bot; p.vy *= -1; }
+  }
+
+  function step(){
+    const temp = Number(tempEl.value);
+    const stir = Number(stirEl.value);
+    const z = zoomFactor();
+
+    // Update visible sizes with zoom
+    waterR = 6.0 * z;
+    ionR = 7.0 * z;
+    latticeR = 7.0 * z;
+
+    // Stirring vortex around beaker center
+    const cx = beaker.x + beaker.w*0.55;
+    const cy = beaker.y + beaker.h*0.50;
+    const stirFactor = (stir/100);
+
+    // Water motion
+    for (const w of waters){
+      const tempFactor = 0.35 + (temp/100)*1.65;
+
+      // thermal jiggle
+      w.vx += rand(-0.06,0.06)*tempFactor;
+      w.vy += rand(-0.06,0.06)*tempFactor;
+
+      // vortex stirring
+      const dx = w.x - cx, dy = w.y - cy;
+      const r2 = dx*dx + dy*dy + 1400;
+      const swirl = 1.05 * stirFactor / Math.sqrt(r2);
+      w.vx += (-dy) * swirl;
+      w.vy += ( dx) * swirl;
+
+      // damping
+      w.vx *= 0.985;
+      w.vy *= 0.985;
+
+      w.x += w.vx;
+      w.y += w.vy;
+
+      clampToBeaker(w);
+
+      w.ang += w.spin * (0.35 + temp/100);
+    }
+
+    // Ions diffuse + stirring + mild hydration attraction
+    for (const p of ions){
+      p.vx += rand(-0.05,0.05) * (0.8 + temp/80);
+      p.vy += rand(-0.05,0.05) * (0.8 + temp/80);
+
+      const dx = p.x - cx, dy = p.y - cy;
+      const r2 = dx*dx + dy*dy + 1400;
+      const swirl = 1.15 * stirFactor / Math.sqrt(r2);
+      p.vx += (-dy) * swirl;
+      p.vy += ( dx) * swirl;
+
+      // hydration pull
+      for (let k=0;k<waters.length;k++){
+        const w = waters[k];
+        const d2 = dist2(p.x,p.y,w.x,w.y);
+        if (d2 < (28*z)*(28*z)){
+          const d = Math.sqrt(d2) + 0.001;
+          const pull = (0.02 * p.hydrate) * (1 - d/(28*z));
+          w.vx += (p.x - w.x) * pull;
+          w.vy += (p.y - w.y) * pull;
+          p.vx *= 0.998;
+          p.vy *= 0.998;
+        }
+      }
+
+      p.vx *= 0.985;
+      p.vy *= 0.985;
+      p.x += p.vx;
+      p.y += p.vy;
+
+      clampToBeaker(p);
+    }
+
+    tryDissolve(temp, stir);
+  }
+
+  // Drawing
+  function roundRectPath(x,y,w,h,r){
+    if (!CanvasRenderingContext2D.prototype.roundRect) {
+      ctx.beginPath();
+      ctx.moveTo(x+r, y);
+      ctx.arcTo(x+w, y, x+w, y+h, r);
+      ctx.arcTo(x+w, y+h, x, y+h, r);
+      ctx.arcTo(x, y+h, x, y, r);
+      ctx.arcTo(x, y, x+w, y, r);
+      ctx.closePath();
+      return;
+    }
+    ctx.beginPath();
+    ctx.roundRect(x,y,w,h,r);
+  }
+
+  function drawBeaker(){
+    ctx.clearRect(0,0,W,H);
+
+    // Title line
+    ctx.fillStyle = "#111";
+    ctx.font = "14px system-ui";
+    ctx.fillText("Salt crystal at the bottom → dissolves into ions that spread through the water", 16, 18);
+
+    // Beaker outline
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "#444";
+    roundRectPath(beaker.x, beaker.y, beaker.w, beaker.h, beaker.rimR);
+    ctx.stroke();
+
+    // Water fill (below surface)
+    ctx.fillStyle = "rgba(120,170,255,0.14)";
+    roundRectPath(beaker.x+1, waterLevel, beaker.w-2, (beaker.y+beaker.h-waterLevel)-1, 16);
+    ctx.fill();
+
+    // Surface line
+    ctx.strokeStyle = "rgba(30,60,120,0.35)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(beaker.x+18, waterLevel);
+    ctx.lineTo(beaker.x+beaker.w-18, waterLevel);
+    ctx.stroke();
+
+    // Base line (inside)
+    ctx.strokeStyle = "rgba(0,0,0,0.2)";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(beaker.x+18, bottom);
+    ctx.lineTo(beaker.x+beaker.w-18, bottom);
+    ctx.stroke();
+
+    // Scale bar (visual aid)
+    const barLen = 120; // pixels
+    const bx = beaker.x + beaker.w + 30;
+    const by = beaker.y + 60;
+    ctx.strokeStyle = "rgba(0,0,0,0.65)";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(bx, by);
+    ctx.lineTo(bx + barLen, by);
+    ctx.stroke();
+    ctx.fillStyle = "rgba(0,0,0,0.8)";
+    ctx.font = "12px system-ui";
+    ctx.fillText("Scale bar (visibility)", bx, by - 10);
+
+    // Simple labels
+    ctx.fillStyle = "rgba(0,0,0,0.65)";
+    ctx.font = "12px system-ui";
+    ctx.fillText("Water surface", beaker.x + 18, waterLevel - 8);
+    ctx.fillText("Beaker", beaker.x + beaker.w - 52, beaker.y + 18);
+  }
+
+  function drawWater(){
+    for (const w of waters){
+      // oxygen
+      ctx.fillStyle = "rgba(40,90,255,0.55)";
+      ctx.beginPath();
+      ctx.arc(w.x, w.y, waterR, 0, Math.PI*2);
+      ctx.fill();
+
+      // hydrogens
+      const a = w.ang;
+      const hDist = 9.5 * zoomFactor();
+      const hAng = 0.55;
+      const hx1 = w.x + Math.cos(a + hAng)*hDist;
+      const hy1 = w.y + Math.sin(a + hAng)*hDist;
+      const hx2 = w.x + Math.cos(a - hAng)*hDist;
+      const hy2 = w.y + Math.sin(a - hAng)*hDist;
+
+      ctx.fillStyle = "rgba(120,200,255,0.65)";
+      ctx.beginPath(); ctx.arc(hx1, hy1, 2.6*zoomFactor(), 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(hx2, hy2, 2.6*zoomFactor(), 0, Math.PI*2); ctx.fill();
+    }
+  }
+
+  function drawLattice(){
+    for (const p of lattice){
+      ctx.fillStyle = (p.type === "Na")
+        ? "rgba(255,160,60,0.92)"
+        : "rgba(80,200,120,0.92)";
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, latticeR, 0, Math.PI*2);
+      ctx.fill();
+    }
+
+    // label near pile
+    ctx.fillStyle = "rgba(0,0,0,0.7)";
+    ctx.font = "13px system-ui";
+    ctx.fillText("Salt crystal", beaker.x + beaker.w/2 - 34, bottom - 120);
+  }
+
+  function drawIons(){
+    for (const p of ions){
+      if (p.type === "Na"){
+        ctx.fillStyle = "rgba(255,140,30,0.97)";
+        ctx.beginPath(); ctx.arc(p.x, p.y, ionR, 0, Math.PI*2); ctx.fill();
+        ctx.fillStyle = "rgba(0,0,0,0.55)";
+        ctx.font = `${12*zoomFactor()}px system-ui`;
+        ctx.fillText("+", p.x-3*zoomFactor(), p.y+4*zoomFactor());
+      } else {
+        ctx.fillStyle = "rgba(60,190,110,0.97)";
+        ctx.beginPath(); ctx.arc(p.x, p.y, ionR, 0, Math.PI*2); ctx.fill();
+        ctx.fillStyle = "rgba(0,0,0,0.55)";
+        ctx.font = `${14*zoomFactor()}px system-ui`;
+        ctx.fillText("−", p.x-3*zoomFactor(), p.y+5*zoomFactor());
+      }
+    }
+
+    // stats
+    ctx.fillStyle = "rgba(0,0,0,0.8)";
+    ctx.font = "13px system-ui";
+    ctx.fillText(`Undissolved ions: ${lattice.length}`, 16, H-18);
+    ctx.fillText(`Dissolved ions: ${ions.length}`, 180, H-18);
+  }
+
+  function draw(){
+    drawBeaker();
+    drawWater();
+    drawLattice();
+    drawIons();
+  }
+
+  // UI
+  function syncLabels(){
+    tempV.textContent = tempEl.value;
+    stirV.textContent = stirEl.value;
+    saltV.textContent = saltEl.value;
+    zoomV.textContent = zoomEl.value;
+  }
+
+  for (const el of [tempEl, stirEl, saltEl, zoomEl]){
+    el.addEventListener("input", () => {
+      syncLabels();
+      // Zoom affects particle sizes + pile spacing → easiest is rebuild on zoom change
+      if (el === zoomEl) resetAll();
+    });
+  }
+
+  resetBtn.addEventListener("click", () => resetAll());
+  pauseBtn.addEventListener("click", () => {
+    paused = !paused;
+    pauseBtn.textContent = paused ? "Resume" : "Pause";
+  });
+
+  function tick(){
+    if (!paused) step();
+    draw();
+    requestAnimationFrame(tick);
+  }
+
+  // Start
+  syncLabels();
+  resetAll();
+  tick();
+})();
+</script>
+</body>
+</html>
