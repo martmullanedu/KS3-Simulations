@@ -1,0 +1,332 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Accommodation (Posterior View) – Ciliary Muscle, Suspensory Ligaments, Lens</title>
+  <style>
+    body{
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      margin: 18px;
+      background:#fff;
+      color:#111;
+    }
+    .wrap{max-width:1000px;margin:0 auto;}
+    h1{font-size:18px;margin:0 0 10px;}
+    .grid{
+      display:grid;
+      grid-template-columns: 1.2fr 0.8fr;
+      gap:14px;
+      align-items:start;
+    }
+    .card{
+      border:1px solid #ddd;
+      border-radius:14px;
+      padding:12px;
+      background:#fff;
+    }
+    svg{width:100%;height:auto;display:block;}
+    .row{
+      display:grid;
+      grid-template-columns: 170px 1fr 90px;
+      gap:10px;
+      align-items:center;
+      margin: 10px 0;
+    }
+    label{font-weight:700;font-size:13px;}
+    input[type="range"]{width:100%;}
+    .readout{font-variant-numeric: tabular-nums; font-size:13px;}
+    .btns{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;}
+    button{
+      border:1px solid #ccc;
+      background:#f6f6f6;
+      border-radius:10px;
+      padding:8px 10px;
+      cursor:pointer;
+      font-weight:700;
+    }
+    button:hover{background:#efefef;}
+    .hint{font-size:13px;color:#333;margin-top:8px;line-height:1.35;}
+    .status{font-size:13px;line-height:1.4;}
+    .status b{font-weight:800;}
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Accommodation (view from behind the lens): ciliary muscle → suspensory ligaments → lens shape</h1>
+
+  <div class="grid">
+    <div class="card">
+      <svg viewBox="0 0 900 560" role="img" aria-label="Posterior view accommodation simulation">
+        <rect x="0" y="0" width="900" height="560" fill="#ffffff"/>
+
+        <!-- Outer boundary hint -->
+        <circle cx="450" cy="280" r="250" fill="none" stroke="#111" stroke-width="6" opacity="0.10"/>
+
+        <!-- Ciliary body region (static base ring) -->
+        <circle cx="450" cy="280" r="195" fill="none" stroke="#d46a00" stroke-width="34" opacity="0.22"/>
+
+        <!-- Ciliary muscle ring (animated radius smaller when contracting) -->
+        <circle id="ciliary" cx="450" cy="280" r="205"
+                fill="none" stroke="#d46a00" stroke-width="42" opacity="0.92"/>
+
+        <!-- Inner shadow -->
+        <circle id="ciliaryInner" cx="450" cy="280" r="180"
+                fill="none" stroke="#b85800" stroke-width="10" opacity="0.25"/>
+
+        <!-- Lens (draw FIRST) -->
+        <g id="lensGroup">
+          <ellipse id="lens" cx="450" cy="280" rx="135" ry="70"
+                   fill="#8fd3ff" opacity="0.78" stroke="#2b6b8a" stroke-width="5"/>
+          <ellipse id="lensHi" cx="410" cy="255" rx="65" ry="25"
+                   fill="#ffffff" opacity="0.22"/>
+          <ellipse id="lensEdge" cx="450" cy="280" rx="135" ry="70"
+                   fill="none" stroke="#1e556f" stroke-width="3" opacity="0.35"/>
+        </g>
+
+        <!-- Suspensory ligaments (draw AFTER lens so they sit on top) -->
+        <g id="ligaments" stroke="#7a3f00" stroke-linecap="round" stroke-linejoin="round">
+          <path id="L0"  d="" stroke-width="5" opacity="1"/>
+          <path id="L1"  d="" stroke-width="5" opacity="1"/>
+          <path id="L2"  d="" stroke-width="5" opacity="1"/>
+          <path id="L3"  d="" stroke-width="5" opacity="1"/>
+          <path id="L4"  d="" stroke-width="5" opacity="1"/>
+          <path id="L5"  d="" stroke-width="5" opacity="1"/>
+          <path id="L6"  d="" stroke-width="5" opacity="1"/>
+          <path id="L7"  d="" stroke-width="5" opacity="1"/>
+          <path id="L8"  d="" stroke-width="5" opacity="1"/>
+          <path id="L9"  d="" stroke-width="5" opacity="1"/>
+          <path id="L10" d="" stroke-width="5" opacity="1"/>
+          <path id="L11" d="" stroke-width="5" opacity="1"/>
+          <path id="L12" d="" stroke-width="5" opacity="1"/>
+          <path id="L13" d="" stroke-width="5" opacity="1"/>
+          <path id="L14" d="" stroke-width="5" opacity="1"/>
+          <path id="L15" d="" stroke-width="5" opacity="1"/>
+        </g>
+
+        <!-- Labels -->
+        <text x="28" y="48" font-size="18" fill="#111" font-weight="800">
+          Posterior view (retina side) looking forward
+        </text>
+
+        <text id="lbl1" x="28" y="82" font-size="16" fill="#111">
+          Ciliary muscle: relaxed
+        </text>
+        <text id="lbl2" x="28" y="106" font-size="16" fill="#111">
+          Suspensory ligaments: tight
+        </text>
+        <text id="lbl3" x="28" y="130" font-size="16" fill="#111">
+          Lens: thinner / less curved
+        </text>
+
+        <!-- Direction cues -->
+        <text x="28" y="535" font-size="16" fill="#111">Far focus →</text>
+        <text x="780" y="535" font-size="16" fill="#111">← Near focus</text>
+        <path d="M120,520 L200,520" stroke="#111" stroke-width="4" stroke-linecap="round"/>
+        <path d="M780,520 L700,520" stroke="#111" stroke-width="4" stroke-linecap="round"/>
+      </svg>
+
+      <div class="hint">
+        Slide to <b>NEAR</b>: the <b>ciliary muscle contracts</b> (ring moves inward), the
+        <b>suspensory ligaments slacken</b> (they become squiggly), and the <b>lens becomes more curved</b>.
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="row">
+        <label for="a">Accommodation</label>
+        <input id="a" type="range" min="0" max="100" value="0" />
+        <div class="readout"><span id="aVal">0</span>%</div>
+      </div>
+
+      <div class="btns">
+        <button id="farBtn" type="button">Set FAR</button>
+        <button id="nearBtn" type="button">Set NEAR</button>
+        <button id="pulseBtn" type="button">Pulse demo</button>
+      </div>
+
+      <div class="status" id="status" style="margin-top:10px;"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const slider = document.getElementById('a');
+  const aVal = document.getElementById('aVal');
+
+  const ciliary = document.getElementById('ciliary');
+  const ciliaryInner = document.getElementById('ciliaryInner');
+
+  const lens = document.getElementById('lens');
+  const lensEdge = document.getElementById('lensEdge');
+  const lensHi = document.getElementById('lensHi');
+
+  const lbl1 = document.getElementById('lbl1');
+  const lbl2 = document.getElementById('lbl2');
+  const lbl3 = document.getElementById('lbl3');
+  const status = document.getElementById('status');
+
+  const farBtn = document.getElementById('farBtn');
+  const nearBtn = document.getElementById('nearBtn');
+  const pulseBtn = document.getElementById('pulseBtn');
+
+  const lig = [];
+  for (let i=0;i<16;i++) lig.push(document.getElementById('L'+i));
+
+  let anim = null;
+
+  const lerp = (a,b,t) => a + (b-a)*t;
+  const cx = 450, cy = 280;
+
+  // Build a ligament as a polyline-ish path:
+  // tight (slack=0) => almost straight line; slack (slack=1) => clearly wavy.
+  function ligamentPath(angleRad, ringR, lensRx, lensRy, slack){
+    // Start point on ciliary ring
+    const sx = cx + ringR * Math.cos(angleRad);
+    const sy = cy + ringR * Math.sin(angleRad);
+
+    // End point on lens edge (ellipse)
+    const ex = cx + lensRx * Math.cos(angleRad);
+    const ey = cy + lensRy * Math.sin(angleRad);
+
+    const dx = ex - sx;
+    const dy = ey - sy;
+    const length = Math.hypot(dx, dy) || 1;
+
+    // Unit direction
+    const ux = dx / length;
+    const uy = dy / length;
+
+    // Unit perpendicular (for side-to-side wiggle)
+    const px = -uy;
+    const py = ux;
+
+    // More slack => bigger wiggle + a touch more "droop"
+    const amp = 0 + 22 * slack;         // sideways squiggle amplitude
+    const droop = 0 + 10 * slack;       // pushes points slightly outward (extra slack look)
+    const waves = 5;                    // number of wiggles
+    const steps = 22;                   // smoothness of the squiggle
+
+    let d = `M ${sx.toFixed(1)} ${sy.toFixed(1)} `;
+
+    for(let i=1;i<steps;i++){
+      const t = i / steps;
+
+      // Base point along straight line
+      let x = sx + dx * t;
+      let y = sy + dy * t;
+
+      // Wiggle (sinusoidal), fades at ends so it connects cleanly
+      const fade = Math.sin(Math.PI * t); // 0 at ends, 1 in middle
+      const w = Math.sin(2 * Math.PI * waves * t) * amp * fade;
+
+      // Add perpendicular wiggle
+      x += px * w;
+      y += py * w;
+
+      // Add slight outward droop (radial from center) when slack
+      const rx = x - cx, ry = y - cy;
+      const rlen = Math.hypot(rx, ry) || 1;
+      x += (rx / rlen) * droop * fade;
+      y += (ry / rlen) * droop * fade;
+
+      d += `L ${x.toFixed(1)} ${y.toFixed(1)} `;
+    }
+
+    d += `L ${ex.toFixed(1)} ${ey.toFixed(1)}`;
+    return d;
+  }
+
+  function render(t){
+    // t = 0 far ... 1 near
+    aVal.textContent = Math.round(t*100);
+
+    // Ciliary muscle contraction
+    const ringR = lerp(220, 185, t);
+    const ringStroke = lerp(42, 52, t);
+    ciliary.setAttribute('r', ringR.toFixed(1));
+    ciliary.setAttribute('stroke-width', ringStroke.toFixed(1));
+    ciliaryInner.setAttribute('r', (ringR - 25).toFixed(1));
+
+    // Lens: near = thicker / more curved
+    const lensRx = lerp(150, 130, t);
+    const lensRy = lerp(55, 92, t);
+    lens.setAttribute('rx', lensRx.toFixed(1));
+    lens.setAttribute('ry', lensRy.toFixed(1));
+    lensEdge.setAttribute('rx', lensRx.toFixed(1));
+    lensEdge.setAttribute('ry', lensRy.toFixed(1));
+
+    // Highlight
+    lensHi.setAttribute('rx', lerp(70, 60, t).toFixed(1));
+    lensHi.setAttribute('ry', lerp(22, 34, t).toFixed(1));
+    lensHi.setAttribute('cx', lerp(410, 405, t).toFixed(1));
+    lensHi.setAttribute('cy', lerp(255, 250, t).toFixed(1));
+
+    // Ligaments: become squiggly as slack increases
+    const slack = t;
+
+    // Keep them visible even when slack (just slightly lighter/thinner)
+    const opacity = lerp(1.0, 0.85, slack);
+    const width = lerp(5.2, 4.2, slack);
+
+    for(let i=0;i<16;i++){
+      const ang = (i/16) * Math.PI * 2 + (Math.PI/16);
+      lig[i].setAttribute('d', ligamentPath(ang, ringR-14, lensRx, lensRy, slack));
+      lig[i].setAttribute('opacity', opacity.toFixed(2));
+      lig[i].setAttribute('stroke-width', width.toFixed(1));
+    }
+
+    // Labels + text
+    if(t < 0.5){
+      lbl1.textContent = "Ciliary muscle: relaxed";
+      lbl2.textContent = "Suspensory ligaments: tight (straight)";
+      lbl3.textContent = "Lens: thinner / less curved";
+      status.innerHTML =
+        `<b>Far focus</b><br>` +
+        `Ciliary muscle relaxes → suspensory ligaments pull tight → lens is pulled thinner (lower focusing power).`;
+    } else {
+      lbl1.textContent = "Ciliary muscle: contracts";
+      lbl2.textContent = "Suspensory ligaments: slack (squiggly)";
+      lbl3.textContent = "Lens: thicker / more curved";
+      status.innerHTML =
+        `<b>Near focus</b><br>` +
+        `Ciliary muscle contracts → suspensory ligaments slacken (go squiggly) → lens becomes more curved (higher focusing power).`;
+    }
+  }
+
+  function setA(p){
+    p = Math.max(0, Math.min(100, p));
+    slider.value = String(p);
+    render(p/100);
+  }
+
+  slider.addEventListener('input', () => render(Number(slider.value)/100));
+  farBtn.addEventListener('click', () => setA(0));
+  nearBtn.addEventListener('click', () => setA(100));
+
+  pulseBtn.addEventListener('click', () => {
+    if(anim) cancelAnimationFrame(anim);
+    const start = performance.now();
+    const duration = 2400;
+
+    const step = (now) => {
+      const p = (now - start) / duration;
+      if(p >= 1){ render(0); anim=null; return; }
+
+      // triangle wave 0->1->0 with smoothstep
+      const tri = p < 0.5 ? (p*2) : (2 - p*2);
+      const t = tri*tri*(3-2*tri);
+
+      render(t);
+      anim = requestAnimationFrame(step);
+    };
+    anim = requestAnimationFrame(step);
+  });
+
+  // init
+  render(0);
+})();
+</script>
+</body>
+</html>
