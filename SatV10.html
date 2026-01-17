@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>KS3: Saturation — rolling liquid + hydration (salt vs sugar)</title>
+
+<style>
+body { font-family: system-ui, Arial; margin: 16px; }
+.row { display:flex; gap:16px; flex-wrap:wrap; align-items:flex-start; }
+canvas { border:1px solid #ccc; border-radius:12px; }
+.panel { max-width:480px; }
+.controls { display:grid; gap:10px; }
+label { display:grid; grid-template-columns:170px 1fr 60px; gap:10px; align-items:center; }
+button, select { padding:8px 10px; border-radius:10px; border:1px solid #ccc; background:#fff; cursor:pointer; }
+input[type=range]{ width:100%; }
+.stat { font-size:13px; padding:10px; border:1px solid #ddd; border-radius:12px; background:#fff; }
+.legend { font-size:13px; margin-top:6px; }
+.pill { display:inline-block; padding:2px 8px; border-radius:999px; border:1px solid #ddd; margin:4px 4px 0 0; }
+.tiny { font-size:12px; color:#555; }
+</style>
+</head>
+
+<body>
+<h2>KS3 Particle Model: Saturation (rolling liquid + hydration)</h2>
+
+<div class="row">
+<canvas id="c" width="860" height="560"></canvas>
+
+<div class="panel">
+<div class="controls">
+
+<label>
+<span>Solute</span>
+<select id="solute">
+<option value="salt">Salt (NaCl)</option>
+<option value="sugar">Sugar (sucrose)</option>
+</select>
+<span></span>
+</label>
+
+<label>
+<span>Temperature</span>
+<input id="temp" type="range" min="0" max="100" value="50">
+<span id="tempV">50</span>
+</label>
+
+<label>
+<span>Stirring</span>
+<input id="stir" type="range" min="0" max="100" value="0">
+<span id="stirV">0</span>
+</label>
+
+<label>
+<span>Zoom</span>
+<input id="zoom" type="range" min="80" max="170" value="140">
+<span id="zoomV">140</span>
+</label>
+
+<div style="display:flex; gap:8px; flex-wrap:wrap;">
+<button id="add10">Add 10</button>
+<button id="add30">Add 30</button>
+<button id="reset">Reset</button>
+<button id="pause">Pause</button>
+</div>
+
+<div class="stat" id="stats"></div>
+
+<div class="legend">
+<div class="pill">Water = blue (touching & rolling)</div>
+<div class="pill">Salt = Na⁺ (orange) + Cl⁻ (green)</div>
+<div class="pill">Sugar = purple clusters</div>
+<div class="pill">Extra solute = solid pile</div>
+</div>
+
+<p class="tiny">
+Liquids are not compressed: particles remain in contact but roll past each other.
+Water is attracted to solute (hydration). If conditions improve, solid re-dissolves.
+</p>
+
+</div>
+</div>
+</div>
+
+<script>
+(() => {
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+
+const soluteEl = document.getElementById("solute");
+const tempEl = document.getElementById("temp");
+const stirEl = document.getElementById("stir");
+const zoomEl = document.getElementById("zoom");
+
+const tempV = document.getElementById("tempV");
+const stirV = document.getElementById("stirV");
+const zoomV = document.getElementById("zoomV");
+
+const stats = document.getElementById("stats");
+
+const add10 = document.getElementById("add10");
+const add30 = document.getElementById("add30");
+const resetBtn = document.getElementById("reset");
+const pauseBtn = document.getElementById("pause");
+
+const rand=(a,b)=>a+Math.random()*(b-a);
+const hypot=Math.hypot;
+
+const beaker={x:110,y:50,w:560,h:460,r:22};
+const waterLevel=beaker.y+80;
+const bottom=beaker.y+beaker.h-18;
+
+function z(){ return zoomEl.value/100; }
+function WATER_R(){ return 7.2*z(); }
+function ION_R(){ return 7.8*z(); }
+function SUGAR_R(){ return 10*z(); }
+
+let waters=[], dissolved=[], pile=[];
+let paused=false;
+
+/* confinement */
+function clampToBeaker(p){
+  const left=beaker.x+24, right=beaker.x+beaker.w-24;
+  const top=waterLevel+12, bot=bottom-10;
+  if(p.x<left){p.x=left;p.vx*=-0.8;}
+  if(p.x>right){p.x=right;p.vx*=-0.8;}
+  if(p.y<top){p.y=top;p.vy*=-0.8;}
+  if(p.y>bot){p.y=bot;p.vy*=-0.8;}
+}
+
+/* solubility */
+function maxDissolved(){
+  const t=tempEl.value/100;
+  return soluteEl.value==="salt"
+    ? Math.round(70+18*t)
+    : Math.round(110+60*t);
+}
+
+/* build water */
+function buildWater(){
+  waters=[];
+  const n=Math.round(300*z());
+  for(let i=0;i<n;i++){
+    waters.push({
+      x:rand(beaker.x+30,beaker.x+beaker.w-30),
+      y:rand(waterLevel+30,bottom-30),
+      vx:rand(-0.3,0.3),
+      vy:rand(-0.3,0.3),
+      ang:rand(0,Math.PI*2),
+      spin:rand(-0.08,0.08)
+    });
+  }
+}
+
+/* forces */
+function repel(a,b,d0,k){
+  const dx=a.x-b.x, dy=a.y-b.y;
+  const d=hypot(dx,dy);
+  if(d>0 && d<d0){
+    const o=d0-d, nx=dx/d, ny=dy/d;
+    a.vx+=nx*k*o; a.vy+=ny*k*o;
+    b.vx-=nx*k*o; b.vy-=ny*k*o;
+  }
+}
+
+function hydrate(s,w,contact,range,k){
+  const dx=s.x-w.x, dy=s.y-w.y;
+  const d=hypot(dx,dy);
+  if(d<=0||d>=range) return;
+  const nx=dx/d, ny=dy/d;
+  if(d<contact){
+    const o=contact-d;
+    s.vx+=nx*0.05*o; s.vy+=ny*0.05*o;
+    w.vx-=nx*0.05*o; w.vy-=ny*0.05*o;
+  } else {
+    s.vx-=nx*k; s.vy-=ny*k;
+    w.vx+=nx*k; w.vy+=ny*k;
+  }
+}
+
+/* add solute */
+function addSolute(n){
+  const max=maxDissolved();
+  const can=Math.max(0,max-dissolved.length);
+  const toD=Math.min(n,can);
+  const toP=n-toD;
+
+  for(let i=0;i<toD;i++){
+    if(soluteEl.value==="salt"){
+      dissolved.push({
+        kind:"salt",
+        type:Math.random()<0.5?"Na":"Cl",
+        x:rand(beaker.x+60,beaker.x+beaker.w-60),
+        y:rand(waterLevel+40,bottom-80),
+        vx:rand(-0.15,0.15),
+        vy:rand(-0.15,0.15)
+      });
+    } else {
+      dissolved.push({
+        kind:"sugar",
+        x:rand(beaker.x+60,beaker.x+beaker.w-60),
+        y:rand(waterLevel+40,bottom-80),
+        vx:rand(-0.12,0.12),
+        vy:rand(-0.12,0.12),
+        ang:rand(0,Math.PI*2),
+        spin:rand(-0.05,0.05)
+      });
+    }
+  }
+
+  for(let i=0;i<toP;i++){
+    pile.push({
+      solute:soluteEl.value,
+      x:rand(beaker.x+50,beaker.x+beaker.w-50),
+      y:bottom-10,
+      type:Math.random()<0.5?"Na":"Cl"
+    });
+  }
+}
+
+/* re-dissolve */
+function redissolve(){
+  if(pile.length===0) return;
+  if(dissolved.length>=maxDissolved()) return;
+
+  const p=0.002+(tempEl.value/100)*0.01+(stirEl.value/100)*0.015;
+  if(Math.random()<p){
+    const s=pile.pop();
+    if(soluteEl.value==="salt"){
+      dissolved.push({
+        kind:"salt",
+        type:s.type,
+        x:s.x,y:bottom-40,
+        vx:rand(-0.15,0.15),
+        vy:rand(-0.4,-0.1)
+      });
+    } else {
+      dissolved.push({
+        kind:"sugar",
+        x:s.x,y:bottom-40,
+        vx:rand(-0.12,0.12),
+        vy:rand(-0.4,-0.1),
+        ang:rand(0,Math.PI*2),
+        spin:rand(-0.05,0.05)
+      });
+    }
+  }
+}
+
+/* step */
+function step(){
+  const temp=tempEl.value/100;
+  const stir=stirEl.value/100;
+  const cx=beaker.x+beaker.w*0.58;
+  const cy=beaker.y+beaker.h*0.52;
+
+  for(const w of waters){
+    w.vx+=rand(-0.05,0.05)*(0.25+temp);
+    w.vy+=rand(-0.05,0.05)*(0.25+temp);
+    const dx=w.x-cx, dy=w.y-cy;
+    const swirl=stir/Math.sqrt(dx*dx+dy*dy+1800);
+    w.vx+=-dy*swirl;
+    w.vy+= dx*swirl;
+  }
+
+  for(let i=0;i<waters.length;i++){
+    for(let j=i+1;j<waters.length;j++){
+      repel(waters[i],waters[j],WATER_R()*2.02,0.03);
+    }
+  }
+
+  const contact=WATER_R()+ION_R();
+  const range=contact*3.2;
+  const attract=soluteEl.value==="salt"?0.022:0.012;
+
+  for(const s of dissolved){
+    const dx=s.x-cx, dy=s.y-cy;
+    const swirl=stir/Math.sqrt(dx*dx+dy*dy+1800);
+    s.vx+=-dy*swirl*0.9;
+    s.vy+= dx*swirl*0.9;
+
+    for(let k=0;k<120;k++){
+      const w=waters[(Math.random()*waters.length)|0];
+      hydrate(s,w,contact,range,attract);
+    }
+  }
+
+  for(const w of waters){
+    w.vx*=0.97; w.vy*=0.97;
+    w.x+=w.vx; w.y+=w.vy;
+    clampToBeaker(w);
+  }
+
+  for(const s of dissolved){
+    s.vx*=0.993; s.vy*=0.993;
+    s.x+=s.vx; s.y+=s.vy;
+    clampToBeaker(s);
+  }
+
+  redissolve();
+}
+
+/* draw */
+function draw(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.strokeRect(beaker.x,beaker.y,beaker.w,beaker.h);
+
+  ctx.fillStyle="rgba(120,170,255,0.15)";
+  ctx.fillRect(beaker.x,waterLevel,beaker.w,bottom-waterLevel);
+
+  for(const w of waters){
+    ctx.fillStyle="rgba(40,90,255,0.6)";
+    ctx.beginPath(); ctx.arc(w.x,w.y,WATER_R(),0,Math.PI*2); ctx.fill();
+    const hDist=9.5*z(), hAng=0.55;
+    ctx.fillStyle="rgba(120,200,255,0.7)";
+    ctx.beginPath();
+    ctx.arc(w.x+Math.cos(w.ang+hAng)*hDist,w.y+Math.sin(w.ang+hAng)*hDist,2.6*z(),0,Math.PI*2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(w.x+Math.cos(w.ang-hAng)*hDist,w.y+Math.sin(w.ang-hAng)*hDist,2.6*z(),0,Math.PI*2);
+    ctx.fill();
+  }
+
+  for(const s of dissolved){
+    if(s.kind==="salt"){
+      ctx.fillStyle=s.type==="Na"?"orange":"green";
+      ctx.beginPath(); ctx.arc(s.x,s.y,ION_R(),0,Math.PI*2); ctx.fill();
+      ctx.fillStyle="rgba(0,0,0,0.6)";
+      ctx.font=`${12*z()}px system-ui`;
+      ctx.fillText(s.type==="Na"?"+":"−",s.x-3*z(),s.y+4*z());
+    } else {
+      ctx.fillStyle="rgba(135,70,210,0.85)";
+      ctx.beginPath(); ctx.arc(s.x,s.y,SUGAR_R(),0,Math.PI*2); ctx.fill();
+    }
+  }
+
+  for(const p of pile){
+    ctx.fillStyle=p.solute==="salt"?"#aaa":"#bbb";
+    ctx.beginPath(); ctx.arc(p.x,p.y,8*z(),0,Math.PI*2); ctx.fill();
+  }
+
+  stats.innerHTML=
+    `Dissolved: <b>${dissolved.length}</b> / ${maxDissolved()}<br>`+
+    `Undissolved pile: <b>${pile.length}</b>`;
+}
+
+/* loop */
+function loop(){
+  if(!paused) step();
+  draw();
+  requestAnimationFrame(loop);
+}
+
+/* UI */
+tempEl.oninput=()=>tempV.textContent=tempEl.value;
+stirEl.oninput=()=>stirV.textContent=stirEl.value;
+zoomEl.oninput=()=>{ zoomV.textContent=zoomEl.value; buildWater(); };
+
+add10.onclick=()=>addSolute(10);
+add30.onclick=()=>addSolute(30);
+resetBtn.onclick=()=>{ dissolved=[]; pile=[]; buildWater(); };
+pauseBtn.onclick=()=>{ paused=!paused; pauseBtn.textContent=paused?"Resume":"Pause"; };
+
+buildWater();
+loop();
+})();
+</script>
+</body>
+</html>
